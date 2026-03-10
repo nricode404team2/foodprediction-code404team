@@ -1,0 +1,8 @@
+{
+  "startupCommands": [
+    "npm install; npm run dev -- --host 0.0.0.0 --port 5173"
+  ],
+  "projectId": "b69bb650-005c-4dbc-b067-7aeaf668d808",
+  "templateId": "any",
+  "detectedFramework": "vite"
+}
