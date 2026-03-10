@@ -1,5 +1,44 @@
 import { useState } from 'react'
-import { Search } from 'lucide-react'
+import { Search, Plus, Sparkles, X } from 'lucide-react'
+
+const HF_TOKEN = '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'
+const HF_API = 'https://api-inference.huggingface.co/models'
+
+async function fetchAIFoodGuidance(foodName) {
+  const prompt = `[INST] You are a canteen food management expert. For the food item "${foodName}", provide practical guidance for a canteen or cafeteria setting.
+
+Respond ONLY with a valid JSON object (no extra text, no markdown):
+{
+  "icon": "<single relevant food emoji>",
+  "storage": "<1-2 sentences on how to store this food safely>",
+  "repurpose": "<1-2 sentences on how to repurpose or reuse leftovers>",
+  "donate": "<1-2 sentences on donation suitability and tips>",
+  "tips": ["<practical tip 1>", "<practical tip 2>"]
+}
+[/INST]`
+
+  const response = await fetch(`${HF_API}/mistralai/Mistral-7B-Instruct-v0.1`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${HF_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      inputs: prompt,
+      parameters: { max_new_tokens: 400, temperature: 0.4, return_full_text: false },
+    }),
+  })
+
+  if (!response.ok) throw new Error('API unavailable')
+
+  const data = await response.json()
+  const text = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text
+  if (!text) throw new Error('Empty response')
+
+  const match = text.match(/\{[\s\S]*\}/)
+  if (!match) throw new Error('No JSON in response')
+  return JSON.parse(match[0])
+}
 
 const FOOD_GUIDANCE = {
   'Rice & Dal': {
@@ -117,17 +156,59 @@ const DEFAULT_GUIDANCE = {
   tips: ['Label containers with date and time', 'First In First Out — use oldest stock first'],
 }
 
-const ALL_ITEMS = Object.keys(FOOD_GUIDANCE)
-
 export default function FoodManagement() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
+  const [customItems, setCustomItems] = useState({})
+  const [newFoodName, setNewFoodName] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [showAddForm, setShowAddForm] = useState(false)
 
-  const filtered = ALL_ITEMS.filter(name =>
+  const allGuidance = { ...FOOD_GUIDANCE, ...customItems }
+  const allItems = Object.keys(allGuidance)
+
+  const filtered = allItems.filter(name =>
     name.toLowerCase().includes(search.toLowerCase())
   )
 
-  const guide = selected ? (FOOD_GUIDANCE[selected] || DEFAULT_GUIDANCE) : null
+  const guide = selected ? (allGuidance[selected] || DEFAULT_GUIDANCE) : null
+
+  const handleAskAI = async () => {
+    const name = newFoodName.trim()
+    if (!name) return
+    if (allGuidance[name]) {
+      setSelected(name)
+      setShowAddForm(false)
+      setNewFoodName('')
+      return
+    }
+    setAiLoading(true)
+    setAiError('')
+    try {
+      const result = await fetchAIFoodGuidance(name)
+      const guidance = {
+        icon: result.icon || '🍱',
+        storage: result.storage || DEFAULT_GUIDANCE.storage,
+        repurpose: result.repurpose || DEFAULT_GUIDANCE.repurpose,
+        donate: result.donate || DEFAULT_GUIDANCE.donate,
+        tips: Array.isArray(result.tips) && result.tips.length ? result.tips : DEFAULT_GUIDANCE.tips,
+      }
+      setCustomItems(prev => ({ ...prev, [name]: guidance }))
+      setSelected(name)
+      setShowAddForm(false)
+      setNewFoodName('')
+    } catch {
+      setAiError('AI could not generate guidance. Using defaults.')
+      const fallback = { ...DEFAULT_GUIDANCE }
+      setCustomItems(prev => ({ ...prev, [name]: fallback }))
+      setSelected(name)
+      setShowAddForm(false)
+      setNewFoodName('')
+    } finally {
+      setAiLoading(false)
+    }
+  }
 
   return (
     <div>
@@ -156,7 +237,8 @@ export default function FoodManagement() {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {filtered.map(name => {
-              const g = FOOD_GUIDANCE[name]
+              const g = allGuidance[name]
+              const isCustom = !!customItems[name]
               return (
                 <button
                   key={name}
@@ -172,13 +254,84 @@ export default function FoodManagement() {
                   }}
                 >
                   <span style={{ fontSize: '18px' }}>{g.icon}</span>
-                  <span style={{ fontSize: '13px', fontWeight: selected === name ? 600 : 400 }}>{name}</span>
+                  <span style={{ fontSize: '13px', fontWeight: selected === name ? 600 : 400, flex: 1 }}>{name}</span>
+                  {isCustom && (
+                    <span style={{ fontSize: '10px', background: 'rgba(79,70,229,0.25)', color: '#a5b4fc', borderRadius: '4px', padding: '1px 5px' }}>AI</span>
+                  )}
                 </button>
               )
             })}
             {filtered.length === 0 && (
               <div style={{ fontSize: '13px', color: '#64748b', padding: '12px', textAlign: 'center' }}>
                 No items found
+              </div>
+            )}
+          </div>
+
+          {/* Add new food */}
+          <div style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
+            {!showAddForm ? (
+              <button
+                onClick={() => { setShowAddForm(true); setAiError('') }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  width: '100%', padding: '9px 12px', borderRadius: '8px',
+                  border: '1px dashed rgba(79,70,229,0.45)', background: 'transparent',
+                  color: '#818cf8', cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: '13px', fontWeight: 500, transition: 'all 0.15s',
+                }}
+              >
+                <Plus size={14} />
+                Add new food item
+              </button>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
+                  <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600 }}>New food item</span>
+                  <button
+                    onClick={() => { setShowAddForm(false); setNewFoodName(''); setAiError('') }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: '2px' }}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                <input
+                  className="form-control"
+                  placeholder="e.g. Pasta, Khichdi..."
+                  value={newFoodName}
+                  onChange={e => setNewFoodName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAskAI()}
+                  style={{ fontSize: '13px' }}
+                  autoFocus
+                />
+                {aiError && (
+                  <div style={{ fontSize: '11px', color: '#f87171' }}>{aiError}</div>
+                )}
+                <button
+                  onClick={handleAskAI}
+                  disabled={!newFoodName.trim() || aiLoading}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                    padding: '9px 12px', borderRadius: '8px', border: 'none',
+                    background: newFoodName.trim() && !aiLoading ? 'linear-gradient(135deg,#4f46e5,#7c3aed)' : 'rgba(79,70,229,0.2)',
+                    color: newFoodName.trim() && !aiLoading ? '#fff' : '#64748b',
+                    cursor: newFoodName.trim() && !aiLoading ? 'pointer' : 'not-allowed',
+                    fontFamily: 'inherit', fontSize: '13px', fontWeight: 600,
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {aiLoading ? (
+                    <>
+                      <span style={{ width: '12px', height: '12px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
+                      Fetching...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={13} />
+                      Ask AI
+                    </>
+                  )}
+                </button>
               </div>
             )}
           </div>
@@ -191,7 +344,19 @@ export default function FoodManagement() {
             <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '20px 24px' }}>
               <span style={{ fontSize: '42px' }}>{guide.icon}</span>
               <div>
-                <div style={{ fontSize: '20px', fontWeight: 700, color: '#e2e8f0' }}>{selected}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ fontSize: '20px', fontWeight: 700, color: '#e2e8f0' }}>{selected}</div>
+                  {customItems[selected] && (
+                    <span style={{
+                      fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px',
+                      background: 'linear-gradient(135deg,rgba(79,70,229,0.3),rgba(124,58,237,0.3))',
+                      color: '#a5b4fc', border: '1px solid rgba(79,70,229,0.4)',
+                      display: 'flex', alignItems: 'center', gap: '4px',
+                    }}>
+                      ✨ AI-generated
+                    </span>
+                  )}
+                </div>
                 <div style={{ fontSize: '13px', color: '#64748b', marginTop: '2px' }}>
                   Canteen food management guide
                 </div>
